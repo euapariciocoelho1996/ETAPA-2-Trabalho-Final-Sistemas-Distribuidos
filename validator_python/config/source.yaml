@@ -1,0 +1,35 @@
+source:
+  host: localhost
+  port: 0  # 0 significa que o sistema escolherá uma porta disponível
+  request_rate: 10  # requisições por segundo
+  max_messages: 100  # número máximo de mensagens para validação
+  target: "http://localhost:8080"
+  connection:
+    timeout: 5
+    retry_attempts: 3
+
+loadbalancer1:
+  host: localhost
+  port: 8081
+  services:
+    - "localhost:8083"  # service1
+    - "localhost:8084"  # service2
+  algorithm: "round-robin"
+  max_connections: 1000
+
+loadbalancer2:
+  host: localhost
+  port: 8082
+  services:
+    - "localhost:8085"  # service3
+    - "localhost:8086"  # service4
+  algorithm: "round-robin"
+  max_connections: 1000
+
+validation:
+  feeding_stage:
+    message_count: 10
+    delay_between_messages: 1.0  # segundos
+  validation_stage:
+    timeout: 30  # segundos
+    min_messages: 50  # número mínimo de mensagens para considerar a validação válida 

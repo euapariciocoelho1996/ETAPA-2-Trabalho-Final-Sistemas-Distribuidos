@@ -1,0 +1,86 @@
+version: '3.8'
+
+services:
+  source:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - SERVICE_TYPE=source
+    networks:
+      - app-network
+
+  load-balancer-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.loadbalancer
+    ports:
+      - "8001:8001"
+    environment:
+      - LB_ID=1
+      - SERVICE_TYPE=load_balancer
+    depends_on:
+      - source
+    networks:
+      - app-network
+
+  load-balancer-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.loadbalancer
+    ports:
+      - "8002:8001"
+    environment:
+      - LB_ID=2
+      - SERVICE_TYPE=load_balancer
+    depends_on:
+      - source
+    networks:
+      - app-network
+
+  service-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+    environment:
+      - SERVICE_TYPE=classifier
+      - SERVICE_ID=1
+    depends_on:
+      - load-balancer-1
+      - load-balancer-2
+    networks:
+      - app-network
+
+  service-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+    environment:
+      - SERVICE_TYPE=classifier
+      - SERVICE_ID=2
+    depends_on:
+      - load-balancer-1
+      - load-balancer-2
+    networks:
+      - app-network
+
+  service-3:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+    environment:
+      - SERVICE_TYPE=classifier
+      - SERVICE_ID=3
+    depends_on:
+      - load-balancer-1
+      - load-balancer-2
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge 

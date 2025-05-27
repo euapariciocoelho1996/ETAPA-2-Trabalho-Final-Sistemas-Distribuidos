@@ -1,0 +1,23 @@
+source:
+  host: "0.0.0.0"
+  port: 8000
+
+load_balancer:
+  host: "0.0.0.0"
+  port: 8001
+  services:
+    - 'service-1:8000'
+    - 'service-2:8000'
+    - 'service-3:8000'
+
+service:
+  host: "0.0.0.0"
+  port: 8002
+  model_path: "/app/vehicle_classifier.pkl"
+  batch_size: 32
+  timeout: 30  # segundos 
+
+model:
+  path: 'vehicle_classifier.pkl'
+  input_size: [64, 64]
+  classes: ['Carro', 'Moto'] 

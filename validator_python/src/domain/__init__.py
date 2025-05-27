@@ -1,0 +1,1 @@
+# Este arquivo torna o diretório domain um pacote Python 

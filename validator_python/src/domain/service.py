@@ -166,17 +166,17 @@ class Service:
     def start(self):
         """Inicia o servidor."""
         try:
+            # Inicia o treinamento do modelo primeiro
+            logger.info("Iniciando treinamento do modelo...")
+            self.classifier._train_model()
+            logger.info("Treinamento do modelo concluído")
+            
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.server_socket.bind((self.host, self.port))
             self.server_socket.listen(5)
             self.port = self.server_socket.getsockname()[1]  # Obtém a porta real se foi especificado 0
             logger.info(f"Servidor iniciado em {self.host}:{self.port}")
-            
-            # Inicia o treinamento do modelo em uma thread separada
-            training_thread = threading.Thread(target=self.classifier._train_model)
-            training_thread.daemon = True
-            training_thread.start()
             
             while True:
                 try:

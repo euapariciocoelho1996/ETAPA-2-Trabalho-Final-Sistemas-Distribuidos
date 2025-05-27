@@ -23,7 +23,7 @@ class ServiceManager:
         """Cria um arquivo de configuração temporário para o serviço."""
         config = {
             'service': {
-                'host': 'localhost',
+                'host': '0.0.0.0',
                 'port': port
             }
         }

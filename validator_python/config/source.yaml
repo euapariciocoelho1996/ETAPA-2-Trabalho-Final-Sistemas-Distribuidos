@@ -1,9 +1,9 @@
 source:
-  host: localhost
+  host: "0.0.0.0"
   port: 0  # 0 significa que o sistema escolherá uma porta disponível
   request_rate: 10  # requisições por segundo
   max_messages: 100  # número máximo de mensagens para validação
-  target: "http://localhost:8080"
+  target: "load-balancer-1"
   connection:
     timeout: 5
     retry_attempts: 3
@@ -12,8 +12,8 @@ loadbalancer1:
   host: localhost
   port: 8081
   services:
-    - "localhost:8083"  # service1
-    - "localhost:8084"  # service2
+    - "load-balancer-1:8083"
+    - "load-balancer-1:8084"
   algorithm: "round-robin"
   max_connections: 1000
 
@@ -21,8 +21,8 @@ loadbalancer2:
   host: localhost
   port: 8082
   services:
-    - "localhost:8085"  # service3
-    - "localhost:8086"  # service4
+    - "load-balancer-2:8085"
+    - "load-balancer-2:8086"
   algorithm: "round-robin"
   max_connections: 1000
 

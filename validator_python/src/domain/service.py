@@ -281,19 +281,4 @@ class Service:
         self.running = False
         if self.server_socket:
             self.server_socket.close()
-        logger.info("Serviço finalizado")
-
-if __name__ == '__main__':
-    # Configuração de logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    
-    try:
-        # Inicia o serviço
-        service = Service('config/config.yaml')
-        service.start()
-    except Exception as e:
-        logging.error(f"Erro ao iniciar serviço: {str(e)}")
-        raise 
+        logger.info("Serviço finalizado") 

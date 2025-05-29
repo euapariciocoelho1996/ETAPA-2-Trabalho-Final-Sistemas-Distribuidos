@@ -28,29 +28,37 @@ class LoadBalancerProxy(AbstractProxy):
     def check_service_availability(self, service: str) -> bool:
         """Verifica se um serviço está disponível."""
         host, port = service.split(':')
-        try:
-            # Tenta estabelecer uma conexão
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(1)  # Timeout de 1 segundo
-            start_time = time.time()
-            sock.connect((host, int(port)))
-            response_time = time.time() - start_time
-            sock.close()
-            
-            # Atualiza o status do serviço
-            self.service_status[service].update({
-                'available': True,
-                'last_check': time.time(),
-                'response_time': response_time,
-                'error_count': 0
-            })
-            return True
-        except Exception as e:
-            logger.warning(f"Serviço {service} indisponível: {str(e)}")
-            self.service_status[service]['error_count'] += 1
-            if self.service_status[service]['error_count'] >= 3:
-                self.service_status[service]['available'] = False
-            return False
+        max_retries = 3
+        retry_delay = 1.0
+        
+        for attempt in range(max_retries):
+            try:
+                # Tenta estabelecer uma conexão
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(2)  # Timeout de 2 segundos
+                start_time = time.time()
+                sock.connect((host, int(port)))
+                response_time = time.time() - start_time
+                sock.close()
+                
+                # Atualiza o status do serviço
+                self.service_status[service].update({
+                    'available': True,
+                    'last_check': time.time(),
+                    'response_time': response_time,
+                    'error_count': 0
+                })
+                return True
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Tentativa {attempt + 1} de {max_retries} falhou ao verificar serviço {service}. Aguardando {retry_delay} segundos...")
+                    time.sleep(retry_delay)
+                else:
+                    logger.warning(f"Serviço {service} indisponível após {max_retries} tentativas: {str(e)}")
+                    self.service_status[service]['error_count'] += 1
+                    if self.service_status[service]['error_count'] >= 3:
+                        self.service_status[service]['available'] = False
+                    return False
 
     def get_available_service(self) -> Optional[str]:
         """Retorna o serviço mais disponível e com menor tempo de resposta."""

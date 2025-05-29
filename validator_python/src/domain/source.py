@@ -13,8 +13,24 @@ import json
 import socket
 import cv2
 import os
+import sys
 
+# Configuração do logging para exibir logs em tempo real
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    stream=sys.stdout,
+    force=True
+)
 logger = logging.getLogger(__name__)
+
+# Configura o handler para não usar buffer
+handler = logging.StreamHandler(sys.stdout)
+handler.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+logger.propagate = False
 
 class Source:
     def __init__(self, config_path: str):
@@ -65,16 +81,36 @@ class Source:
         logger.info(f"Arquivos encontrados em {test_dir}: {files}")
         
         for img_name in files:
-            if img_name.endswith(('.jpg', '.jpeg', '.png', '.webp')):
+            if img_name.endswith(('.jpg', '.jpeg', '.png', '.webp', '.avif')):
                 img_path = os.path.join(test_dir, img_name)
                 try:
                     logger.info(f"Tentando carregar imagem: {img_path}")
+                    # Tenta ler a imagem
                     img = cv2.imread(img_path)
+                    if img is None:
+                        # Se falhar, tenta ler como webp
+                        img = cv2.imdecode(np.fromfile(img_path, dtype=np.uint8), cv2.IMREAD_COLOR)
+                    
                     if img is not None:
-                        # Codifica a imagem em bytes
-                        _, img_bytes = cv2.imencode('.jpg', img)
-                        test_images.append(img_bytes.tobytes())
-                        logger.info(f"Imagem de teste carregada com sucesso: {img_path}")
+                        # Verifica se a imagem tem um tamanho mínimo
+                        if img.size < 1000:  # Mínimo de 1000 pixels
+                            logger.warning(f"Imagem muito pequena: {img_path} ({img.size} pixels)")
+                            continue
+                            
+                        # Redimensiona para um tamanho padrão
+                        img = cv2.resize(img, (224, 224))
+                        
+                        # Codifica a imagem em bytes com alta qualidade
+                        _, img_bytes = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                        img_data = img_bytes.tobytes()
+                        
+                        # Verifica se o tamanho é válido
+                        if len(img_data) < 1000:  # Mínimo de 1KB
+                            logger.warning(f"Imagem codificada muito pequena: {img_path} ({len(img_data)} bytes)")
+                            continue
+                            
+                        test_images.append(img_data)
+                        logger.info(f"Imagem de teste carregada com sucesso: {img_path} ({len(img_data)} bytes)")
                     else:
                         logger.error(f"Falha ao carregar imagem: {img_path} - cv2.imread retornou None")
                 except Exception as e:
@@ -99,6 +135,35 @@ class Source:
         
         # Aguarda o servidor iniciar
         time.sleep(1)
+        
+        # Aguarda os Load Balancers estarem prontos
+        max_retries = 5
+        retry_delay = 2  # segundos
+        
+        for attempt in range(max_retries):
+            try:
+                # Tenta conectar em cada serviço dos Load Balancers
+                for service in self.config['loadbalancer1']['services']:
+                    host, port = service.split(':')
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.settimeout(1)
+                        s.connect((host, int(port)))
+                
+                for service in self.config['loadbalancer2']['services']:
+                    host, port = service.split(':')
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.settimeout(1)
+                        s.connect((host, int(port)))
+                
+                logger.info("Todos os serviços estão prontos!")
+                break
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Tentativa {attempt + 1} de {max_retries} falhou. Aguardando {retry_delay} segundos...")
+                    time.sleep(retry_delay)
+                else:
+                    logger.error("Não foi possível conectar aos serviços após várias tentativas")
+                    raise
         
         # Inicia o experimento
         self.run_experiment()
@@ -130,10 +195,11 @@ class Source:
         start_time = time.time()
         end_time = start_time + duration
         request_count = 0
+        self.running = True  # Flag para controlar o estado do experimento
         
         logger.info(f"\n=== Iniciando Experimento ({duration}s) ===")
         
-        while time.time() < end_time:
+        while time.time() < end_time and self.running:
             request_count += 1
             # Seleciona uma imagem aleatória
             image_data = np.random.choice(self.test_images)
@@ -141,50 +207,57 @@ class Source:
             # Registra o tempo inicial
             t1_start = time.time()
             
-            # Envia a requisição
-            response = self.send_request(image_data, request_count)
-            
-            # Registra os tempos
-            metrics = {
-                "t1_source_lb1": response.get("t1", 0),
-                "t2_lb1_service": response.get("t2", 0),
-                "t3_service_lb2": response.get("t3", 0),
-                "t4_lb2_service": response.get("t4", 0),
-                "t_processamento": response.get("t5", 0),
-                "t5_service_source": response.get("t6", 0),
-                "t5_total": response.get("mrt", 0),
-                "average_intermediate": response.get("mrt", 0) / 6.0
-            }
-            
-            self.metrics_history.append(metrics)
-            
-            # Log do fluxo da requisição
-            logger.info(f"---> Fluxo Req {request_count}:")
-            logger.info(f"     Nó 01 (Source) -> Nó 02 (LB1) [{metrics['t1_source_lb1']:.3f}s]")
-            logger.info(f"     Nó 02 (LB1) -> Serviço (escolhido: {response.get('lb1_service', 'unknown')}) [{metrics['t2_lb1_service']:.3f}s]")
-            logger.info(f"     Serviço ({response.get('lb1_service', 'unknown')}) -> Nó 03 (LB2) [{metrics['t3_service_lb2']:.3f}s]")
-            logger.info(f"     Nó 03 (LB2) -> Serviço (escolhido: {response.get('lb2_service', 'unknown')}) [{metrics['t4_lb2_service']:.3f}s]")
-            logger.info(f"     Serviço ({response.get('lb2_service', 'unknown')}) Processamento [{metrics['t_processamento']:.3f}s]")
-            logger.info(f"     Serviço ({response.get('lb2_service', 'unknown')}) -> Nó 01 (Source) [{metrics['t5_service_source']:.3f}s]")
-            logger.info("<---")
-            logger.info(f"     Média dos Tempos Intermediários: {metrics['average_intermediate']:.3f}s")
-            logger.info("")
-            
-            # Log do resumo da requisição
-            logger.info(f"=== Resumo da Requisição {request_count} ===")
-            logger.info("Tempos:")
-            logger.info(f"  T1 (Source -> LB1): {metrics['t1_source_lb1']:.3f}s")
-            logger.info(f"  T2 (LB1 -> Serviço): {metrics['t2_lb1_service']:.3f}s")
-            logger.info(f"  T3 (Serviço S1 -> LB2): {metrics['t3_service_lb2']:.3f}s")
-            logger.info(f"  T4 (LB2 -> Serviço): {metrics['t4_lb2_service']:.3f}s")
-            logger.info(f"  T5 (Processamento Serviço): {metrics['t_processamento']:.3f}s")
-            logger.info(f"  T5 (Serviço S2 -> Source): {metrics['t5_service_source']:.3f}s")
-            logger.info(f"  T5 (Tempo Total): {metrics['t5_total']:.3f}s")
-            logger.info(f"  Média dos Tempos Intermediários: {metrics['average_intermediate']:.3f}s")
-            logger.info("=============================")
+            try:
+                # Envia a requisição
+                response = self.send_request(image_data, request_count)
+                
+                # Registra os tempos
+                metrics = {
+                    "t1_source_lb1": response.get("t1", 0),
+                    "t2_lb1_service": response.get("t2", 0),
+                    "t3_service_lb2": response.get("t3", 0),
+                    "t4_lb2_service": response.get("t4", 0),
+                    "t_processamento": response.get("t5", 0),
+                    "t5_service_source": response.get("t6", 0),
+                    "t5_total": response.get("mrt", 0),
+                    "average_intermediate": response.get("mrt", 0) / 6.0
+                }
+                
+                self.metrics_history.append(metrics)
+                
+                # Log do fluxo da requisição
+                logger.info(f"---> Fluxo Req {request_count}:")
+                logger.info(f"     Nó 01 (Source) -> Nó 02 (LB1) [{metrics['t1_source_lb1']:.3f}s]")
+                logger.info(f"     Nó 02 (LB1) -> Serviço (escolhido: {response.get('lb1_service', 'unknown')}) [{metrics['t2_lb1_service']:.3f}s]")
+                logger.info(f"     Serviço ({response.get('lb1_service', 'unknown')}) -> Nó 03 (LB2) [{metrics['t3_service_lb2']:.3f}s]")
+                logger.info(f"     Nó 03 (LB2) -> Serviço (escolhido: {response.get('lb2_service', 'unknown')}) [{metrics['t4_lb2_service']:.3f}s]")
+                logger.info(f"     Serviço ({response.get('lb2_service', 'unknown')}) Processamento [{metrics['t_processamento']:.3f}s]")
+                logger.info(f"     Serviço ({response.get('lb2_service', 'unknown')}) -> Nó 01 (Source) [{metrics['t5_service_source']:.3f}s]")
+                logger.info("<---")
+                logger.info(f"     Média dos Tempos Intermediários: {metrics['average_intermediate']:.3f}s")
+                logger.info("")
+                
+                # Log do resumo da requisição
+                logger.info(f"=== Resumo da Requisição {request_count} ===")
+                logger.info("Tempos:")
+                logger.info(f"  T1 (Source -> LB1): {metrics['t1_source_lb1']:.3f}s")
+                logger.info(f"  T2 (LB1 -> Serviço): {metrics['t2_lb1_service']:.3f}s")
+                logger.info(f"  T3 (Serviço S1 -> LB2): {metrics['t3_service_lb2']:.3f}s")
+                logger.info(f"  T4 (LB2 -> Serviço): {metrics['t4_lb2_service']:.3f}s")
+                logger.info(f"  T5 (Processamento Serviço): {metrics['t_processamento']:.3f}s")
+                logger.info(f"  T5 (Serviço S2 -> Source): {metrics['t5_service_source']:.3f}s")
+                logger.info(f"  T5 (Tempo Total): {metrics['t5_total']:.3f}s")
+                logger.info(f"  Média dos Tempos Intermediários: {metrics['average_intermediate']:.3f}s")
+                logger.info("=============================")
+                
+            except Exception as e:
+                logger.error(f"Erro na requisição {request_count}: {str(e)}")
+                if not self.running:  # Se o erro ocorreu porque o serviço está parando
+                    break
             
             # Aguarda o intervalo correto baseado na taxa de requisições
-            time.sleep(1.0 / self.request_rate)
+            if self.running:  # Só aguarda se ainda estiver rodando
+                time.sleep(1.0 / self.request_rate)
         
         logger.info(f"\n=== Experimento Concluído ===")
         logger.info(f"Total de requisições: {request_count}")
@@ -204,12 +277,24 @@ class Source:
             
             logger.info(f"Request {request_num}: Usando serviços {lb1_service} -> {lb2_service}")
             
+            def try_connect(host: str, port: int, max_retries: int = 3, retry_delay: float = 1.0) -> socket.socket:
+                for attempt in range(max_retries):
+                    try:
+                        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        s.settimeout(10)
+                        s.connect((host, int(port)))
+                        return s
+                    except Exception as e:
+                        if attempt < max_retries - 1:
+                            logger.warning(f"Tentativa {attempt + 1} de {max_retries} falhou ao conectar em {host}:{port}. Aguardando {retry_delay} segundos...")
+                            time.sleep(retry_delay)
+                        else:
+                            raise Exception(f"Não foi possível conectar em {host}:{port} após {max_retries} tentativas: {str(e)}")
+            
             # T1: Source -> LB1
             start_time = time.time()
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(10)  # Aumentado para 10 segundos
-                host, port = lb1_service.split(':')
-                s.connect((host, int(port)))
+            host, port = lb1_service.split(':')
+            with try_connect(host, port) as s:
                 # Envia o tamanho da imagem primeiro
                 size_bytes = len(image_data).to_bytes(8, 'big')
                 s.sendall(size_bytes)
@@ -229,10 +314,8 @@ class Source:
             
             # T2: LB1 -> Serviço
             start_time = time.time()
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(10)
-                host, port = lb1_service.split(':')
-                s.connect((host, int(port)))
+            host, port = lb1_service.split(':')
+            with try_connect(host, port) as s:
                 size_bytes = len(image_data).to_bytes(8, 'big')
                 s.sendall(size_bytes)
                 s.sendall(image_data)
@@ -250,13 +333,11 @@ class Source:
             
             # T3: Serviço S1 -> LB2
             start_time = time.time()
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(10)
-                host, port = lb2_service.split(':')
-                s.connect((host, int(port)))
-                size_bytes = len(response).to_bytes(8, 'big')
+            host, port = lb2_service.split(':')
+            with try_connect(host, port) as s:
+                size_bytes = len(image_data).to_bytes(8, 'big')
                 s.sendall(size_bytes)
-                s.sendall(response)
+                s.sendall(image_data)
                 size_data = s.recv(8)
                 size = int.from_bytes(size_data, 'big')
                 response = b''
@@ -271,13 +352,11 @@ class Source:
             
             # T4: LB2 -> Serviço
             start_time = time.time()
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(10)
-                host, port = lb2_service.split(':')
-                s.connect((host, int(port)))
-                size_bytes = len(response).to_bytes(8, 'big')
+            host, port = lb2_service.split(':')
+            with try_connect(host, port) as s:
+                size_bytes = len(image_data).to_bytes(8, 'big')
                 s.sendall(size_bytes)
-                s.sendall(response)
+                s.sendall(image_data)
                 size_data = s.recv(8)
                 size = int.from_bytes(size_data, 'big')
                 response = b''
@@ -292,13 +371,11 @@ class Source:
             
             # T5: Processamento Serviço
             start_time = time.time()
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(10)
-                host, port = lb2_service.split(':')
-                s.connect((host, int(port)))
-                size_bytes = len(response).to_bytes(8, 'big')
+            host, port = lb2_service.split(':')
+            with try_connect(host, port) as s:
+                size_bytes = len(image_data).to_bytes(8, 'big')
                 s.sendall(size_bytes)
-                s.sendall(response)
+                s.sendall(image_data)
                 size_data = s.recv(8)
                 size = int.from_bytes(size_data, 'big')
                 response = b''
@@ -313,13 +390,11 @@ class Source:
             
             # T6: Serviço S2 -> Source
             start_time = time.time()
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(10)
-                host, port = lb2_service.split(':')
-                s.connect((host, int(port)))
-                size_bytes = len(response).to_bytes(8, 'big')
+            host, port = lb2_service.split(':')
+            with try_connect(host, port) as s:
+                size_bytes = len(image_data).to_bytes(8, 'big')
                 s.sendall(size_bytes)
-                s.sendall(response)
+                s.sendall(image_data)
                 size_data = s.recv(8)
                 size = int.from_bytes(size_data, 'big')
                 response = b''
@@ -434,5 +509,32 @@ class Source:
 
     def stop(self):
         """Para o servidor e limpa recursos."""
-        self.network_manager.stop()
-        logger.info("Source finalizado") 
+        try:
+            logger.info("Iniciando processo de parada do Source...")
+            # Força o flush dos logs
+            for handler in logger.handlers:
+                handler.flush()
+            
+            # Marca que o experimento deve parar
+            self.running = False
+            
+            # Aguarda um tempo para as requisições em andamento terminarem
+            logger.info("Aguardando requisições em andamento terminarem...")
+            time.sleep(2)  # Aguarda 2 segundos para as requisições terminarem
+            
+            # Para o servidor
+            self.network_manager.stop()
+            
+            # Força o flush dos logs novamente
+            for handler in logger.handlers:
+                handler.flush()
+                
+            logger.info("Source finalizado com sucesso")
+            # Último flush antes de parar
+            for handler in logger.handlers:
+                handler.flush()
+        except Exception as e:
+            logger.error(f"Erro ao parar o Source: {str(e)}")
+            # Força o flush mesmo em caso de erro
+            for handler in logger.handlers:
+                handler.flush() 

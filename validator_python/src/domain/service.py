@@ -51,6 +51,29 @@ class ImageClassifierService:
         except Exception as e:
             logger.error(f"Erro ao salvar modelo: {str(e)}")
     
+    def _process_image(self, img_path: str) -> np.ndarray:
+        """Processa uma imagem para treinamento ou classificação."""
+        try:
+            # Tenta ler a imagem
+            img = cv2.imread(img_path)
+            if img is None:
+                # Se falhar, tenta ler como webp
+                img = cv2.imdecode(np.fromfile(img_path, dtype=np.uint8), cv2.IMREAD_COLOR)
+            
+            if img is None:
+                raise ValueError(f"Não foi possível ler a imagem: {img_path}")
+            
+            # Redimensiona para 64x64 e converte para escala de cinza
+            img = cv2.resize(img, (64, 64))
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            
+            # Aplana a imagem
+            return img.flatten()
+            
+        except Exception as e:
+            logger.error(f"Erro ao processar imagem {img_path}: {str(e)}")
+            raise
+    
     def _train_model(self):
         """Treina o modelo KNN com imagens de carros e motos."""
         logger.info("Iniciando treinamento do modelo...")
@@ -66,35 +89,25 @@ class ImageClassifierService:
         
         # Processa imagens de carros
         for img_name in os.listdir(car_dir):
-            if img_name.endswith(('.jpg', '.jpeg', '.png', '.webp')):
+            if img_name.endswith(('.jpg', '.jpeg', '.png', '.webp', '.avif')):
                 img_path = os.path.join(car_dir, img_name)
                 try:
-                    img = cv2.imread(img_path)
-                    if img is not None:
-                        # Redimensiona para 64x64 e converte para escala de cinza
-                        img = cv2.resize(img, (64, 64))
-                        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-                        # Aplana a imagem
-                        features = img.flatten()
-                        X.append(features)
-                        y.append(0)  # 0 para carros
-                        logger.info(f"Imagem processada: {img_path}")
+                    features = self._process_image(img_path)
+                    X.append(features)
+                    y.append(0)  # 0 para carros
+                    logger.info(f"Imagem processada: {img_path}")
                 except Exception as e:
                     logger.error(f"Erro ao processar imagem {img_path}: {str(e)}")
         
         # Processa imagens de motos
         for img_name in os.listdir(bike_dir):
-            if img_name.endswith(('.jpg', '.jpeg', '.png', '.webp')):
+            if img_name.endswith(('.jpg', '.jpeg', '.png', '.webp', '.avif')):
                 img_path = os.path.join(bike_dir, img_name)
                 try:
-                    img = cv2.imread(img_path)
-                    if img is not None:
-                        img = cv2.resize(img, (64, 64))
-                        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-                        features = img.flatten()
-                        X.append(features)
-                        y.append(1)  # 1 para motos
-                        logger.info(f"Imagem processada: {img_path}")
+                    features = self._process_image(img_path)
+                    X.append(features)
+                    y.append(1)  # 1 para motos
+                    logger.info(f"Imagem processada: {img_path}")
                 except Exception as e:
                     logger.error(f"Erro ao processar imagem {img_path}: {str(e)}")
         
@@ -120,16 +133,26 @@ class ImageClassifierService:
     def classify_image(self, image_data: bytes) -> Tuple[str, float]:
         """Classifica uma imagem e retorna a classe e a confiança."""
         try:
+            if not image_data or len(image_data) < 1000:  # Mínimo de 1KB para uma imagem válida
+                raise ValueError(f"Imagem inválida: tamanho muito pequeno ({len(image_data)} bytes)")
+            
             # Converte os bytes da imagem para array numpy
             nparr = np.frombuffer(image_data, np.uint8)
             img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             
             if img is None:
-                raise ValueError("Imagem inválida")
+                raise ValueError("Falha ao decodificar a imagem")
             
-            # Processa a imagem
+            logger.info(f"Imagem decodificada com sucesso. Dimensões: {img.shape}")
+            
+            # Redimensiona para 64x64 e converte para escala de cinza
             img = cv2.resize(img, (64, 64))
             img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            
+            # Verifica se a imagem está vazia ou corrompida
+            if img.size == 0 or np.all(img == 0):
+                raise ValueError("Imagem vazia ou corrompida")
+            
             features = img.flatten().reshape(1, -1)
             
             # Normaliza os dados
@@ -168,8 +191,12 @@ class Service:
         try:
             # Inicia o treinamento do modelo primeiro
             logger.info("Iniciando treinamento do modelo...")
-            self.classifier._train_model()
-            logger.info("Treinamento do modelo concluído")
+            try:
+                self.classifier._train_model()
+                logger.info("Treinamento do modelo concluído com sucesso")
+            except Exception as e:
+                logger.error(f"Erro durante o treinamento do modelo: {str(e)}")
+                raise
             
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

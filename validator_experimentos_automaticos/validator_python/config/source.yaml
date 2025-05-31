@@ -1,35 +1,32 @@
-source:
-  host: "0.0.0.0"
-  port: 0  # 0 significa que o sistema escolherá uma porta disponível
-  request_rate: 50  # requisições por segundo
-  max_messages: 100  # número máximo de mensagens para validação
-  target: "load-balancer-1"
-  connection:
-    timeout: 5
-    retry_attempts: 3
-
 loadbalancer1:
+  algorithm: round-robin
   host: localhost
+  max_connections: 1000
   port: 8081
   services:
-    - "load-balancer-1:8083"
-    - "load-balancer-1:8084"
-  algorithm: "round-robin"
-  max_connections: 1000
-
+  - load-balancer-1:8083
+  - load-balancer-1:8084
 loadbalancer2:
+  algorithm: round-robin
   host: localhost
+  max_connections: 1000
   port: 8082
   services:
-    - "load-balancer-2:8085"
-    - "load-balancer-2:8086"
-  algorithm: "round-robin"
-  max_connections: 1000
-
+  - load-balancer-2:8085
+  - load-balancer-2:8086
+source:
+  connection:
+    retry_attempts: 3
+    timeout: 5
+  host: 0.0.0.0
+  max_messages: 100
+  port: 0
+  request_rate: 500
+  target: load-balancer-1
 validation:
   feeding_stage:
+    delay_between_messages: 1.0
     message_count: 10
-    delay_between_messages: 1.0  # segundos
   validation_stage:
-    timeout: 30  # segundos
-    min_messages: 50  # número mínimo de mensagens para considerar a validação válida 
+    min_messages: 50
+    timeout: 30

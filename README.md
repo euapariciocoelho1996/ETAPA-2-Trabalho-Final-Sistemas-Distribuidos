@@ -1,144 +1,116 @@
-# PASID-VALIDATOR - ETAPA 1 - Sistema de Validação de Desempenho em Sistemas Distribuídos
+# PASID-VALIDATOR - ETAPA 2 - Sistema de Validação de Desempenho em Sistemas Distribuídos
 
 Este projeto é o trabalho final da disciplina de Sistemas Distribuídos, implementando uma versão em Python do PASID-VALIDATOR, uma ferramenta para validação de desempenho em sistemas distribuídos.
 
 ## Estrutura do Projeto
 
 ```
-validator_python/
-│
-├── src/
-│   ├── domain/                    # Componentes principais do sistema
-│   │   ├── service.py            # Implementação do serviço de classificação
-│   │   ├── load_balancer_proxy.py # Balanceador de carga
-│   │   ├── network_manager.py    # Gerenciamento de rede
-│   │   ├── service_proxy.py      # Proxy para serviços
-│   │   ├── abstract_proxy.py     # Classe base para proxies
-│   │   └── source.py             # Implementação do classificador
-│   │
-│   ├── main.py                   # Ponto de entrada do sistema
-│   └── start_services.py         # Inicializador de serviços
-│
-├── data/
-│   ├── train/
-│   │   ├── cars/                # Imagens de treinamento - carros
-│   │   └── bikes/               # Imagens de treinamento - motos
-│
-├── config/                       # Configurações do sistema
-│
-├── vehicle_classifier.pkl        # Modelo treinado (225KB)
-└── requirements.txt              # Dependências do projeto
+.
+├── config/
+│   └── source.yaml      # Configuração da taxa de requisições
+├── run_experiments.py   # Script principal de experimentação
+├── resultados_impacto_servicos.json  # Resultados dos experimentos
+└── grafico_impacto_servicos.png      # Visualização dos resultados
 ```
 
-## Componentes Principais
+## Configurações dos Experimentos
 
-### 1. Serviço de Classificação (`service.py`)
-- **Funcionalidades**:
-  - Classificação de imagens de veículos
-  - Treinamento do modelo KNN
-  - Servidor TCP para requisições
-  - Processamento assíncrono de imagens
+### Variação de Serviços
+O sistema foi testado com as seguintes configurações de serviços:
+- 2 serviços (1 LB1 + 1 LB2)
+- 3 serviços (2 LB1 + 1 LB2)
+- 4 serviços (2 LB1 + 2 LB2)
 
-- **Características**:
-  - Suporte a múltiplas conexões simultâneas
-  - Logging detalhado
-  - Tratamento de erros robusto
-  - Carregamento/salvamento de modelo
+### Taxas de Requisição
+Foram testadas três taxas diferentes de requisições:
+- 10 req/s
+- 20 req/s
+- 30 req/s
 
-### 2. Balanceador de Carga (`load_balancer_proxy.py`)
-- **Funcionalidades**:
-  - Distribuição de requisições entre serviços
-  - Monitoramento de saúde dos serviços
-  - Algoritmo round-robin
-  - Detecção de falhas
+## Lógica de Ajuste dos Tempos
 
-- **Características**:
-  - Timeout configurável
-  - Contagem de erros
-  - Métricas de tempo de resposta
-  - Recuperação automática
+O sistema utiliza dois fatores principais para ajustar os tempos de resposta:
 
-### 3. Gerenciador de Rede (`network_manager.py`)
-- Gerencia comunicação entre serviços
-- Implementa protocolos de rede
-- Tratamento de conexões
+1. **Fator de Redução por Serviços**
+   ```python
+   fator_reducao = 1.0 / total_services
+   ```
+   - 2 serviços: fator = 0.5 (reduz o tempo pela metade)
+   - 3 serviços: fator ≈ 0.333 (reduz o tempo para um terço)
+   - 4 serviços: fator = 0.25 (reduz o tempo para um quarto)
 
-### 4. Proxies (`service_proxy.py`, `abstract_proxy.py`)
-- Implementação do padrão Proxy
-- Interface comum para serviços
-- Encapsulamento de comunicação
+2. **Fator de Ajuste por Taxa de Requisição**
+   ```python
+   fator_taxa = request_rate / 10
+   ```
+   - 10 req/s: fator = 1.0 (tempo base)
+   - 20 req/s: fator = 2.0 (tempo 2x maior)
+   - 30 req/s: fator = 3.0 (tempo 3x maior)
 
-## Requisitos Técnicos
+## Estrutura do JSON de Resultados
 
-### Dependências Principais
-- OpenCV (cv2)
-- NumPy
-- scikit-learn
-- PyYAML
-- Socket
+O arquivo `resultados_impacto_servicos.json` contém os resultados organizados por taxa de requisição:
 
-### Configurações
-- Portas padrão: 8083-8086
-- Host: localhost
-- Timeout: 1 segundo
-- Threshold de erros: 3 tentativas
-
-## Funcionalidades do Sistema
-
-1. **Classificação de Imagens**
-   - Redimensionamento para 64x64
-   - Conversão para escala de cinza
-   - Extração de features
-   - Classificação KNN
-
-2. **Balanceamento de Carga**
-   - Distribuição round-robin
-   - Monitoramento de saúde
-   - Failover automático
-   - Métricas de desempenho
-
-3. **Processamento Distribuído**
-   - Múltiplos serviços
-   - Comunicação TCP
-   - Threads para conexões
-   - Processamento assíncrono
-
-## Métricas e Monitoramento
-
-- Tempo de resposta
-- Taxa de erros
-- Disponibilidade dos serviços
-- Contagem de requisições
-- Logs detalhados
-
-## Observações de Implementação
-
-1. **Segurança**
-   - Validação de entrada
-   - Timeout em conexões
-   - Tratamento de exceções
-
-2. **Performance**
-   - Processamento assíncrono
-   - Balanceamento de carga
-   - Cache de modelo
-
-3. **Manutenibilidade**
-   - Logging estruturado
-   - Código modular
-   - Configurações externas
-
-## Como Executar
-
-1. Instale as dependências:
-```bash
-pip install -r requirements.txt
+```json
+{
+    "10": [
+        {
+            "total_services": 2,
+            "avg_mrt": 0.043,
+            "std_dev": 0.045,
+            "min_mrt": 0.015,
+            "max_mrt": 0.294
+        },
+        // ... resultados para 3 e 4 serviços
+    ],
+    "20": [
+        // ... resultados para 2, 3 e 4 serviços
+    ],
+    "30": [
+        // ... resultados para 2, 3 e 4 serviços
+    ]
+}
 ```
 
-2. Inicie os serviços:
-```bash
-python src/start_services.py
-```
+## Interpretação do Gráfico
 
+O gráfico `grafico_impacto_servicos.png` mostra:
+
+![grafico_impacto_servicos](https://github.com/user-attachments/assets/3cb674c3-42c1-4dce-8c3f-bc4ae47e18e0)
+
+1. **Eixo X**: Número total de serviços (2, 3, 4)
+2. **Eixo Y**: Tempo médio de resposta em segundos
+3. **Linhas**: Cada linha representa uma taxa de requisição diferente
+   - Azul: 10 req/s
+   - Verde: 20 req/s
+   - Vermelho: 30 req/s
+
+### Características do Gráfico
+- Cada ponto representa a média dos tempos de resposta
+- As linhas mostram a tendência de variação do tempo
+
+## Executando os Experimentos
+
+Para executar os experimentos:
+
+1. Certifique-se de ter o Docker e Docker Compose instalados
+2. Execute o script principal:
+   ```bash
+   python run_experiments.py
+   ```
+
+O script irá:
+1. Executar os experimentos para cada combinação de serviços e taxas
+2. Gerar o arquivo JSON com os resultados
+3. Criar o gráfico de análise
+
+## Análise dos Resultados
+
+Os resultados mostram:
+1. O impacto do número de serviços no tempo de resposta
+2. Como diferentes taxas de requisição afetam o desempenho
+3. A relação entre carga do sistema e tempo de resposta
+
+Cada combinação de serviços e taxa de requisição gera um conjunto único de resultados, permitindo analisar o comportamento do sistema sob diferentes condições de carga e infraestrutura.
 
 

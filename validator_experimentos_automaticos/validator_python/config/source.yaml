@@ -21,7 +21,7 @@ source:
   host: 0.0.0.0
   max_messages: 100
   port: 0
-  request_rate: 500
+  request_rate: 30
   target: load-balancer-1
 validation:
   feeding_stage:

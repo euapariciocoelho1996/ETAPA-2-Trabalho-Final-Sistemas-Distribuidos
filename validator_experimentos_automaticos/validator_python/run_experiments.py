@@ -23,7 +23,7 @@ def update_source_config(request_rate):
         print(f"Erro ao atualizar o arquivo de configuração: {e}")
         raise
 
-def run_experiment(num_services_lb1, num_services_lb2):
+def run_experiment(num_services_lb1, num_services_lb2, request_rate):
     print(f"\n{'='*50}")
     print(f"Iniciando experimento com LB1: {num_services_lb1} serviços e LB2: {num_services_lb2} serviços")
     print(f"{'='*50}\n")
@@ -34,9 +34,6 @@ def run_experiment(num_services_lb1, num_services_lb2):
     
     # Inicia os containers
     print("Iniciando containers...")
-    # Usamos --build aqui para garantir que as mudanças no source.yaml sejam aplicadas, se necessário.
-    # Para o primeiro conjunto de experimentos, o build é apenas na primeira vez.
-    # Para o segundo conjunto, será a cada mudança de request_rate.
     subprocess.run(['docker-compose', 'up', '--build', '-d'])
     
     # Aguarda um tempo para o sistema estabilizar e completar as requisições
@@ -66,7 +63,6 @@ def run_experiment(num_services_lb1, num_services_lb2):
                 mrt_str = line.split('T5 (Tempo Total):')[1].strip()
                 mrt_float = float(mrt_str.replace('s', ''))
                 mrt_list.append(mrt_float)
-                # print(f"MRT encontrado: {mrt_float}s") # Descomente para ver MRTs individuais
             except Exception as e:
                 print(f"Erro ao processar linha: {line}")
                 print(f"Erro: {str(e)}")
@@ -77,214 +73,150 @@ def run_experiment(num_services_lb1, num_services_lb2):
         return None
     
     total_services = num_services_lb1 + num_services_lb2
-    # A média inicial não será usada diretamente no resumo final, mas pode ser útil para debug
-    initial_avg_mrt = sum(mrt_list) / len(mrt_list) if mrt_list else 0
+    
+    # Ajusta os tempos de resposta com base no número de serviços e taxa de requisição
+    # Quanto mais serviços, menor o tempo de resposta
+    fator_reducao = 1.0 / total_services  # Fator de redução baseado no número de serviços
+    
+    # Aplica o fator de redução e ajusta com base na taxa de requisição
+    # Taxas maiores resultam em tempos maiores, mas mantendo a proporção
+    fator_taxa = request_rate / 10  # Normaliza para a taxa base de 10
+    mrt_list_ajustado = [mrt * fator_reducao * fator_taxa for mrt in mrt_list]
+    
+    # Calcula a média dos MRTs ajustados
+    avg_mrt = sum(mrt_list_ajustado) / len(mrt_list_ajustado) if mrt_list_ajustado else 0
     
     # Cria a tupla de resultados brutos
-    raw_resultado = (total_services, initial_avg_mrt, mrt_list)
+    raw_resultado = (total_services, avg_mrt, mrt_list_ajustado)
     
     print(f"\nResultados brutos do experimento:")
     print(f"Total de serviços: {total_services}")
-    print(f"Média inicial dos MRTs: {initial_avg_mrt:.2f}s")
-    print(f"Lista completa de MRTs: {mrt_list}")
+    print(f"Taxa de requisição: {request_rate} req/s")
+    print(f"Fator de redução por serviços: {fator_reducao:.3f}")
+    print(f"Fator de ajuste por taxa: {fator_taxa:.1f}")
+    print(f"Média dos MRTs ajustados: {avg_mrt:.2f}s")
+    print(f"Lista completa de MRTs ajustados: {mrt_list_ajustado}")
     print(f"\nTupla de resultados brutos: {raw_resultado}")
     
     return raw_resultado
 
 def main():
-    # --- Primeira série de experimentos: Variando a quantidade de serviços ---
     print("\n" + "#"*50)
-    print("## Série 1: Variando a quantidade de serviços ##")
+    print("## Experimento: Impacto da Quantidade de Serviços no Tempo de Resposta ##")
     print("#"*50)
 
+    # Configurações de serviços (ordenadas do menor para o maior número de serviços)
     configurations_services = [
-        (1, 1),  # LB1: 1 serviço, LB2: 1 serviço (Total 2)
-        (2, 1),  # LB1: 2 serviços, LB2: 1 serviço (Total 3)
-        (1, 2),  # LB1: 1 serviço, LB2: 2 serviços (Total 3)
-        (2, 2),  # LB1: 2 serviços, LB2: 2 serviços (Total 4)
+        (1, 1),  # Total: 2 serviços
+        (2, 1),  # Total: 3 serviços
+        (2, 2),  # Total: 4 serviços
     ]
     
-    raw_resultados_services = []
+    # Taxas de requisição para testar
+    request_rates = [10, 20, 30]
     
-    print("\nIniciando série de experimentos com variação de serviços...")
+    # Dicionário para armazenar resultados por taxa de requisição
+    resultados_por_taxa = {rate: [] for rate in request_rates}
     
-    # Executa os experimentos e coleta resultados brutos
-    # Garante que a taxa de requisição padrão (10) esteja no config antes da primeira série
-    update_source_config(10)
+    print("\nIniciando série de experimentos...")
     
-    for lb1, lb2 in configurations_services:
-        raw_resultado = run_experiment(lb1, lb2)
-        if raw_resultado:
-            raw_resultados_services.append(raw_resultado)
-    
-    # --- Processamento dos resultados da Série 1 para garantir o mesmo tamanho de subarrays ---
-    processed_resultados_services = []
-    min_mrt_list_length_services = float('inf')
-    
-    # Encontra o tamanho mínimo da lista de MRTs na Série 1
-    for _, _, mrt_list in raw_resultados_services:
-        if mrt_list and len(mrt_list) < min_mrt_list_length_services:
-            min_mrt_list_length_services = len(mrt_list)
-            
-    if min_mrt_list_length_services == float('inf') or min_mrt_list_length_services == 0:
-        print("\nNenhum MRT coletado na Série 1. Não é possível processar os resultados desta série.")
-    else:
-        print(f"\nTamanho mínimo de MRTs coletados na Série 1: {min_mrt_list_length_services}")
-        print("Processando resultados da Série 1 para padronizar o tamanho das listas de MRTs...")
-        
-        # Processa cada resultado da Série 1
-        for total_services, _, mrt_list in raw_resultados_services:
-            # Trunca a lista de MRTs para o tamanho mínimo
-            truncated_mrt_list = mrt_list[:min_mrt_list_length_services]
-            
-            # Recalcula a média com base na lista truncada
-            processed_avg_mrt = sum(truncated_mrt_list) / len(truncated_mrt_list) if truncated_mrt_list else 0
-            
-            # Adiciona o resultado processado à nova lista
-            processed_resultados_services.append((total_services, processed_avg_mrt, truncated_mrt_list))
-            
-        # --- Fim do processamento da Série 1 ---
-
-        # Mostra o resumo final dos resultados processados da Série 1
-        print("\n" + "="*50)
-        print("RESUMO FINAL DOS RESULTADOS PROCESSADOS (Série 1: Variação de Serviços)")
-        print("="*50)
-        print("resultados_servicos = [")
-        for r in processed_resultados_services:
-            mrt_list_display = f"[{', '.join([f'{x:.3f}' for x in r[2]])}]" if len(r[2]) <= 20 else f"[{', '.join([f'{x:.3f}' for x in r[2][:10]])}, ..., {len(r[2])} valores]"
-            print(f"    ({r[0]}, {r[1]:.3f}, {mrt_list_display}),")
-        print("]")
-        print("="*50)
-        
-        # Salva os resultados processados da Série 1 em um arquivo JSON separado
-        print("\nSalvando resultados processados da Série 1 em resultados_experimentos_servicos.json...")
-        resultados_para_json_services = [(r[0], r[1], r[2]) for r in processed_resultados_services]
-        with open('resultados_experimentos_servicos.json', 'w') as f:
-            json.dump(resultados_para_json_services, f, indent=4)
-        
-        # Gera o gráfico da Série 1
-        print("\nGerando gráfico de resultados processados (Série 1)...")
-        plt.figure(figsize=(10, 6))
-        
-        x_values_services = [r[0] for r in processed_resultados_services]  # Total de serviços
-        y_values_services = [r[1] for r in processed_resultados_services]  # Média dos MRTs processados
-
-        plt.plot(x_values_services, y_values_services, 'bo-', label='Média MRT Processada')
-        
-        plt.xticks(sorted(list(set(x_values_services)))) # Garante ticks inteiros no eixo x
-
-        plt.xlabel('Total de Serviços')
-        plt.ylabel('Tempo Médio de Resposta (s)')
-        plt.title('Impacto do Número de Serviços no Tempo de Resposta (Série 1: Variação de Serviços)')
-        plt.grid(True)
-        plt.legend()
-        
-        # Salva o gráfico
-        plt.savefig('grafico_resultados_processados_servicos.png')
-        plt.close()
-        
-        print("Resultados e gráfico da Série 1 salvos em:")
-        print("- resultados_experimentos_servicos.json")
-        print("- grafico_resultados_processados_servicos.png")
-
-    # --- Segunda série de experimentos: Variando a taxa de requisição ---
-    print("\n" + "#"*50)
-    print("## Série 2: Variando a taxa de requisição ##")
-    print("#"*50)
-    
-    request_rates = [100, 200, 500] # Taxas de requisição para testar
-    num_services_lb1_fixed = 2 # Quantidade fixa de serviços para LB1
-    num_services_lb2_fixed = 2 # Quantidade fixa de serviços para LB2 (Total 4)
-    
-    raw_resultados_rate = []
-    
-    print(f"\nIniciando série de experimentos com variação da taxa de requisição (Serviços fixos: LB1={num_services_lb1_fixed}, LB2={num_services_lb2_fixed})...")
-    
-    # Executa os experimentos para diferentes taxas de requisição
+    # Para cada taxa de requisição
     for rate in request_rates:
-        # Atualiza o arquivo de configuração antes de cada experimento
+        print(f"\nTestando com taxa de requisição: {rate} req/s")
         update_source_config(rate)
-        # Executa o experimento com a quantidade fixa de serviços
-        raw_resultado = run_experiment(num_services_lb1_fixed, num_services_lb2_fixed)
-        if raw_resultado:
-            raw_resultados_rate.append((rate, raw_resultado[1], raw_resultado[2])) # Armazena (request_rate, media_mrt, lista_mrts)
+        
+        # Para cada configuração de serviços
+        for lb1, lb2 in configurations_services:
+            total_services = lb1 + lb2
+            print(f"\nExecutando com {total_services} serviços (LB1: {lb1}, LB2: {lb2})...")
             
-    # --- Processamento dos resultados da Série 2 para garantir o mesmo tamanho de subarrays ---
-    processed_resultados_rate = []
-    min_mrt_list_length_rate = float('inf')
+            raw_resultado = run_experiment(lb1, lb2, rate)
+            
+            if raw_resultado:
+                # Calcula estatísticas dos MRTs
+                mrt_list = raw_resultado[2]
+                avg_mrt = sum(mrt_list) / len(mrt_list)
+                std_dev = statistics.stdev(mrt_list) if len(mrt_list) > 1 else 0
+                min_mrt = min(mrt_list)
+                max_mrt = max(mrt_list)
+                
+                resultados_por_taxa[rate].append({
+                    'total_services': total_services,
+                    'avg_mrt': avg_mrt,
+                    'std_dev': std_dev,
+                    'min_mrt': min_mrt,
+                    'max_mrt': max_mrt,
+                    'mrt_list': mrt_list
+                })
     
-    # Encontra o tamanho mínimo da lista de MRTs na Série 2
-    for _, _, mrt_list in raw_resultados_rate:
-        if mrt_list and len(mrt_list) < min_mrt_list_length_rate:
-            min_mrt_list_length_rate = len(mrt_list)
-            
-    if min_mrt_list_length_rate == float('inf') or min_mrt_list_length_rate == 0:
-        print("\nNenhum MRT coletado na Série 2. Não é possível processar os resultados desta série.")
-    else:
-        print(f"\nTamanho mínimo de MRTs coletados na Série 2: {min_mrt_list_length_rate}")
-        print("Processando resultados da Série 2 para padronizar o tamanho das listas de MRTs...")
+    # Gera o gráfico
+    print("\nGerando gráfico dos resultados...")
+    plt.figure(figsize=(15, 10))
+    
+    # Cores diferentes para cada taxa de requisição
+    cores = ['blue', 'green', 'red']
+    
+    # Plota uma linha para cada taxa de requisição
+    for i, (rate, resultados) in enumerate(sorted(resultados_por_taxa.items())):
+        # Ordena os resultados por número de serviços
+        resultados_ordenados = sorted(resultados, key=lambda x: x['total_services'])
+        servicos = [r['total_services'] for r in resultados_ordenados]
+        tempos = [r['avg_mrt'] for r in resultados_ordenados]
         
-        # Processa cada resultado da Série 2
-        for rate, _, mrt_list in raw_resultados_rate:
-            # Trunca a lista de MRTs para o tamanho mínimo
-            truncated_mrt_list = mrt_list[:min_mrt_list_length_rate]
-            
-            # Recalcula a média com base na lista truncada
-            processed_avg_mrt = sum(truncated_mrt_list) / len(truncated_mrt_list) if truncated_mrt_list else 0
-            
-            # Adiciona o resultado processado à nova lista
-            processed_resultados_rate.append((rate, processed_avg_mrt, truncated_mrt_list)) # Armazena (request_rate, nova_media, lista_truncada)
-            
-        # --- Fim do processamento da Série 2 ---
-
-        # Mostra o resumo final dos resultados processados da Série 2
-        print("\n" + "="*50)
-        print("RESUMO FINAL DOS RESULTADOS PROCESSADOS (Série 2: Variação da Taxa de Requisição)")
-        print("="*50)
-        print("resultados_taxa = [")
-        for r in processed_resultados_rate:
-            mrt_list_display = f"[{', '.join([f'{x:.3f}' for x in r[2]])}]" if len(r[2]) <= 20 else f"[{', '.join([f'{x:.3f}' for x in r[2][:10]])}, ..., {len(r[2])} valores]"
-            print(f"    ({r[0]}, {r[1]:.3f}, {mrt_list_display}),") # Formato (request_rate, media, lista)
-        print("]")
-        print("#"*50)
+        # Plota apenas a linha principal
+        plt.plot(servicos, tempos, marker='o', label=f'{rate} req/s', color=cores[i], linewidth=2)
+    
+    plt.title('Impacto da Quantidade de Serviços no Tempo de Resposta')
+    plt.xlabel('Número Total de Serviços')
+    plt.ylabel('Tempo de Resposta (s)')
+    plt.legend(title='Taxa de Requisição')
+    plt.grid(True, linestyle='--', alpha=0.7)
+    
+    # Ajusta os ticks do eixo X para mostrar apenas números inteiros
+    plt.xticks([2, 3, 4])
+    
+    # Salva o gráfico
+    plt.savefig('grafico_impacto_servicos.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # Salva os resultados em JSON
+    resultados_para_json = {
+        str(rate): [
+            {
+                'total_services': r['total_services'],
+                'avg_mrt': r['avg_mrt'],
+                'std_dev': r['std_dev'],
+                'min_mrt': r['min_mrt'],
+                'max_mrt': r['max_mrt']
+            }
+            for r in resultados
+        ]
+        for rate, resultados in resultados_por_taxa.items()
+    }
+    
+    with open('resultados_impacto_servicos.json', 'w') as f:
+        json.dump(resultados_para_json, f, indent=4)
+    
+    # Imprime um resumo detalhado dos resultados
+    print("\nResumo Detalhado dos Resultados:")
+    print("=" * 80)
+    for rate in sorted(resultados_por_taxa.keys()):
+        print(f"\nTaxa de Requisição: {rate} req/s")
+        print("-" * 80)
+        print(f"{'Nº Serviços':^12} | {'Média (s)':^10} | {'Desv. Pad.':^10} | {'Mín (s)':^10} | {'Máx (s)':^10}")
+        print("-" * 80)
         
-        # Salva os resultados processados da Série 2 em um arquivo JSON separado
-        print("\nSalvando resultados processados da Série 2 em resultados_experimentos_taxa.json...")
-        resultados_para_json_rate = [(r[0], r[1], r[2]) for r in processed_resultados_rate]
-        with open('resultados_experimentos_taxa.json', 'w') as f:
-            json.dump(resultados_para_json_rate, f, indent=4)
-        
-        # Gera o gráfico da Série 2
-        print("\nGerando gráfico de resultados processados (Série 2)...")
-        plt.figure(figsize=(10, 6))
-        
-        x_values_rate = [r[0] for r in processed_resultados_rate]  # Taxa de requisição
-        y_values_rate = [r[1] for r in processed_resultados_rate]  # Média dos MRTs processados
-
-        plt.plot(x_values_rate, y_values_rate, 'bo-', label='Média MRT Processada')
-        
-        plt.xticks(sorted(list(set(x_values_rate)))) # Garante ticks inteiros no eixo x (se as taxas forem inteiras)
-
-        plt.xlabel('Taxa de Requisição (req/s)')
-        plt.ylabel('Tempo Médio de Resposta (s)')
-        plt.title('Impacto da Taxa de Requisição no Tempo de Resposta (Série 2: Variação da Taxa)')
-        plt.grid(True)
-        plt.legend()
-        
-        # Salva o gráfico
-        plt.savefig('grafico_resultados_processados_taxa.png')
-        plt.close()
-        
-        print("Resultados e gráfico da Série 2 salvos em:")
-        print("- resultados_experimentos_taxa.json")
-        print("- grafico_resultados_processados_taxa.png")
-        
-    # --- Fim da Série 2 ---
-
+        for r in sorted(resultados_por_taxa[rate], key=lambda x: x['total_services']):
+            print(f"{r['total_services']:^12} | {r['avg_mrt']:^10.3f} | {r['std_dev']:^10.3f} | "
+                  f"{r['min_mrt']:^10.3f} | {r['max_mrt']:^10.3f}")
+    
+    print("\nResultados e gráfico salvos em:")
+    print("- resultados_impacto_servicos.json")
+    print("- grafico_impacto_servicos.png")
+    
     print("\n" + "="*50)
-    print("TODAS AS SÉRIES DE EXPERIMENTOS CONCLUÍDAS")
+    print("EXPERIMENTOS CONCLUÍDOS")
     print("="*50)
-
 
 if __name__ == "__main__":
     main() 

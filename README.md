@@ -27,17 +27,7 @@ Foram testadas três taxas diferentes de requisições:
 - 20 req/s
 - 30 req/s
 
-## Lógica de Ajuste dos Tempos
 
-O sistema utiliza dois fatores principais para ajustar os tempos de resposta:
-
-1. **Fator de Redução por Serviços**
-   ```python
-   fator_reducao = 1.0 / total_services
-   ```
-   - 2 serviços: fator = 0.5 (reduz o tempo pela metade)
-   - 3 serviços: fator ≈ 0.333 (reduz o tempo para um terço)
-   - 4 serviços: fator = 0.25 (reduz o tempo para um quarto)
 
 2. **Fator de Ajuste por Taxa de Requisição**
    ```python

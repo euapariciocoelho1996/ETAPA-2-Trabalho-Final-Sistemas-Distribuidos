@@ -26,17 +26,7 @@ Foram testadas três taxas diferentes de requisições:
 - 10 req/s
 - 20 req/s
 - 30 req/s
-
-
-
-2. **Fator de Ajuste por Taxa de Requisição**
-   ```python
-   fator_taxa = request_rate / 10
-   ```
-   - 10 req/s: fator = 1.0 (tempo base)
-   - 20 req/s: fator = 2.0 (tempo 2x maior)
-   - 30 req/s: fator = 3.0 (tempo 3x maior)
-
+  
 ## Estrutura do JSON de Resultados
 
 O arquivo `resultados_impacto_servicos.json` contém os resultados organizados por taxa de requisição:
